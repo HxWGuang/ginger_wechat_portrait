@@ -15,6 +15,7 @@
 选项：
   --output DIR                        输出目录（默认 ./wechat_analysis_output）
   --sample-size N                     供 Claude 分析的采样消息数上限（默认 100）
+  --full                              全量分析模式：使用所有过滤后消息（上限 3000 条）
   --personality-result FILE           自己的人格分析结果 JSON
   --partner-personality-result FILE   对方的人格分析结果 JSON
   --partner-name NAME                 对方的名字（默认"对方"）
@@ -31,6 +32,7 @@ import data_loader
 from data_loader import _replace_wechat_emoji
 import report as report_mod
 import sampler
+from sampler import full_sample
 import stats as stats_mod
 import visualizer
 from personality import extract_features
@@ -85,6 +87,8 @@ def main():
     parser.add_argument('--output', default='./wechat_analysis_output')
     parser.add_argument('--sample-size', type=int, default=100,
                         help='供 Claude 分析的采样消息数上限（默认 100）')
+    parser.add_argument('--full', action='store_true',
+                        help='全量分析模式：使用所有过滤后消息（上限 3000 条），跳过采样')
     parser.add_argument('--personality-result', default=None,
                         help='自己的人格分析结果 JSON 文件')
     parser.add_argument('--partner-personality-result', default=None,
@@ -189,10 +193,21 @@ def main():
 
     else:
         # 模式A（默认）：采样消息，导出 personality_input.json 供 Claude 分析
-        print('\n🧠 正在采样消息，准备人格分析输入...')
+        print('\n🧠 正在准备人格分析输入...')
+
+        # Self-personality input
         clean_df = data_loader.filter_for_personality(df)
-        messages = sampler.smart_sample(clean_df, target_n=args.sample_size)
-        features = extract_features(messages)
+        all_clean = clean_df['content'].tolist()
+
+        if args.full:
+            messages = full_sample(clean_df)
+            mode_label = '全量'
+        else:
+            messages = sampler.smart_sample(clean_df, target_n=args.sample_size)
+            mode_label = '采样'
+
+        # 量化特征始终基于全量过滤后消息计算，提高统计精度
+        features = extract_features(all_clean)
         top_words = sorted(stats['word_freq'].items(), key=lambda x: x[1], reverse=True)[:30]
 
         ai_input = {
@@ -209,14 +224,26 @@ def main():
         input_path = os.path.join(output_dir, 'personality_input.json')
         with open(input_path, 'w', encoding='utf-8') as f:
             json.dump(ai_input, f, ensure_ascii=False, indent=2)
-        print(f'   自己：已采样 {len(messages)} 条消息 → {input_path}')
+        total_clean = len(all_clean)
+        if args.full and total_clean > 3000:
+            print(f'   自己：全量 {total_clean} 条 → 截取上限 3000 条 → {input_path}')
+        else:
+            print(f'   自己：已{mode_label} {len(messages)} 条消息（过滤后共 {total_clean} 条）→ {input_path}')
 
         # 生成对方的分析输入
         if df_partner is not None and len(df_partner) > 0 and partner_stats is not None:
             clean_partner = data_loader.filter_for_personality(df_partner)
             if len(clean_partner) > 0:
-                partner_messages = sampler.smart_sample(clean_partner, target_n=args.sample_size)
-                partner_features = extract_features(partner_messages)
+                all_clean_partner = clean_partner['content'].tolist()
+
+                if args.full:
+                    partner_messages = full_sample(clean_partner)
+                    partner_mode_label = '全量'
+                else:
+                    partner_messages = sampler.smart_sample(clean_partner, target_n=args.sample_size)
+                    partner_mode_label = '采样'
+
+                partner_features = extract_features(all_clean_partner)
                 partner_top_words = sorted(
                     partner_stats['word_freq'].items(), key=lambda x: x[1], reverse=True
                 )[:30]
@@ -235,7 +262,11 @@ def main():
                 partner_path = os.path.join(output_dir, 'partner_input.json')
                 with open(partner_path, 'w', encoding='utf-8') as f:
                     json.dump(partner_ai_input, f, ensure_ascii=False, indent=2)
-                print(f'   对方：已采样 {len(partner_messages)} 条消息 → {partner_path}')
+                total_clean_partner = len(all_clean_partner)
+                if args.full and total_clean_partner > 3000:
+                    print(f'   对方：全量 {total_clean_partner} 条 → 截取上限 3000 条 → {partner_path}')
+                else:
+                    print(f'   对方：已{partner_mode_label} {len(partner_messages)} 条消息（过滤后共 {total_clean_partner} 条）→ {partner_path}')
             else:
                 print('   ⚠️  对方消息过滤后为空，跳过对方分析输入生成')
         else:
