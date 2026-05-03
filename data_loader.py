@@ -125,8 +125,12 @@ def load(csv_path: str, sender: int = 1) -> pd.DataFrame:
     df['content'] = df['content'].apply(_replace_wechat_emoji)
     df = df[df['content'].str.len() > 0]
 
-    # 时间解析（Unix 秒）
-    df['datetime'] = pd.to_datetime(df['ts'], unit='s', errors='coerce')
+    # 时间解析（Unix 秒，UTC epoch → 本地时区 Asia/Shanghai）
+    df['datetime'] = (
+        pd.to_datetime(df['ts'], unit='s', errors='coerce', utc=True)
+        .dt.tz_convert('Asia/Shanghai')
+        .dt.tz_localize(None)  # 移除时区标记，保持 naive datetime 兼容下游
+    )
     df = df.dropna(subset=['datetime'])
 
     df['date']    = df['datetime'].dt.date

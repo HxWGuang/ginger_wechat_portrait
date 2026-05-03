@@ -110,44 +110,33 @@ csrutil status
 
 ### Step 5 · 【手动】提取微信密钥
 
-> **为什么需要手动**：`find_key.py` 通过 `lldb` 附加到微信进程读取内存中的密钥。
-> Claude Code 的子进程不具备 `taskport` 权限，**必须由用户在系统 Terminal.app 中执行**。
+> **为什么需要手动**：微信 4.1.x 改变了加密机制，旧的 lldb 断点方案（`find_key.py`）已失效。
+> 现改用 **C 内存扫描器**（`find_all_keys_macos.c`），通过 Mach VM API 直接扫描微信进程内存。
+> 扫描器需要 `sudo` 权限（除非微信已做 ad-hoc 重签名）。
 
-**操作前询问（AskUserQuestion）**：
-> 准备从微信内存中提取密钥。运行前请确认：
-> ① 微信 Mac 客户端当前处于**登录状态**
-> ② 近期在微信里打开过几个对话（确保消息已写入本地）
->
-> 确认后输入"继续"，我会给出需要在 Terminal.app 中执行的命令。
+**操作流程**：
 
-**确认后给出以下命令，让用户复制到 Terminal.app 执行**：
+1. Skill 自动 clone `ylytdeng/wechat-decrypt` 到 `/tmp/wechat-decrypt` 并编译 C 扫描器
+2. 用户收到命令后在 **Terminal.app** 中执行（需要 sudo 密码）：
+   ```bash
+   sudo /tmp/wechat-decrypt/find_all_keys_macos
+   ```
+3. 扫描器输出匹配结果，保存为 `all_keys.json`
+4. Skill 自动将 `all_keys.json` 转换为 `wechat_keys.json` 格式
+5. 后续解密流程与旧版相同
 
+**替代方案**（避免 sudo）：
 ```bash
-cd ~/Documents/wechat-db-decrypt-macos
-PYTHONPATH="/Library/Developer/CommandLineTools/Library/PrivateFrameworks/LLDB.framework/Versions/A/Resources/Python" \
-/Library/Developer/CommandLineTools/usr/bin/python3.9 find_key.py
+sudo codesign --force --deep --sign - /Applications/WeChat.app
 ```
-
-**同时告知用户操作步骤**：
-1. 脚本启动后微信会**短暂卡住**（正在附加进程，约 2～5 分钟，属正常现象）
-2. 微信恢复响应后，切换到微信，**依次点开 3～5 个不同的聊天窗口**
-3. 终端出现 `[!] Found new key!` 表示成功
-4. 按 `Ctrl+C` 停止，`wechat_keys.json` 自动保存
-5. 完成后回到 Claude Code 告知已完成
+重签名后重启微信，可无需 sudo 运行扫描器。
 
 **错误处理**：
 | 错误信息 | 处理方式 |
 |---------|---------|
-| `ModuleNotFoundError: No module named 'lldb'` | 确认使用的是 Python 3.9，`_lldb` 只支持 3.9 |
-| 架构错误（Apple Silicon） | 命令前加 `arch -arm64` |
-| `Permission denied` / `process attach denied` | SIP 未关闭，返回 Level 3 |
-
-**密钥提取成功后，主动提示用户**：
-> 密钥已提取完成！现在可以立刻重新开启 SIP 了——后续解密和所有分析都不需要 SIP。
->
-> 步骤：关机 → 恢复模式 → 终端执行 `csrutil enable` → `reboot`
->
-> 也可以先继续完成本次解密，之后再重启开启。
+| `task_for_pid failed: 5` | 需要 sudo 或对微信做 ad-hoc 重签名 |
+| `setCipherKey function not found` | 旧版 lldb 方案不适用，切换至 C 扫描器 |
+| 编译失败 | 确认 Xcode Command Line Tools 已安装：`xcode-select --install` |
 
 ---
 
@@ -188,9 +177,11 @@ cd "$TOOL_DIR" && "$VENV/bin/python" export_contact.py --contact "<联系人名>
 
 `export_contact.py` 会：
 - 模糊搜索联系人（备注名 / 昵称 / 微信号）
-- 导出所有文本消息为 `export_<联系人名>.csv`
-- 自动查找并导出双方头像（存入 meta sidecar JSON）
+- 导出所有消息到 `wechat_analysis_output/<联系人名>/export_<联系人名>.csv`
+- 同时生成 `.json` 和 `.meta.json`（头像信息）于同一目录
 - 输出 `EXPORT_PATH:<路径>` 和 `META_PATH:<路径>` 供后续步骤使用
+
+输出目录按联系人隔离，分析多人时互不干扰。
 
 **三种情况**：
 
@@ -210,11 +201,11 @@ cd "$TOOL_DIR" && "$VENV/bin/python" export_contact.py --contact "<联系人名>
 cd "$TOOL_DIR" && "$VENV/bin/python" main.py "$CSV_PATH" 2>&1
 ```
 
-生成内容：
+生成内容（均位于 `wechat_analysis_output/<联系人名>/` 下）：
 - `charts/hourly.png`、`monthly_trend.png`、`weekday_bar.png`、`length_dist.png`
 - `charts/word_cloud_pair.png`（双人词云）或 `charts/word_cloud.png`（单人词云）
-- `wechat_analysis_output/personality_input.json`（自己的消息样本，供分析）
-- `wechat_analysis_output/partner_input.json`（对方的消息样本，供分析，若有）
+- `personality_input.json`（自己的消息样本，供分析）
+- `partner_input.json`（对方的消息样本，供分析，若有）
 
 ---
 
@@ -222,10 +213,10 @@ cd "$TOOL_DIR" && "$VENV/bin/python" main.py "$CSV_PATH" 2>&1
 
 **触发条件**：自动（Claude Code 直接执行，无需外部 API）
 
-**同时**读取两个文件：
+**同时**读取两个文件（路径由 Step 9a 的输出确定，位于 `wechat_analysis_output/<联系人名>/` 下）：
 ```
-$TOOL_DIR/wechat_analysis_output/personality_input.json
-$TOOL_DIR/wechat_analysis_output/partner_input.json（若存在）
+<output_dir>/personality_input.json
+<output_dir>/partner_input.json（若存在）
 ```
 
 对两份数据的 `sample_messages` 预处理：**过滤超过 150 字的消息**（通常为转发文档），保留日常对话。
@@ -241,10 +232,10 @@ $TOOL_DIR/wechat_analysis_output/partner_input.json（若存在）
 - Big Five 是分析重点，MBTI 仅供参考（在 note 中注明置信度原因）
 - `reliability` 字段：客观描述本次数据的实际情况（样本量、时间跨度、实际观察到的话题分布），只写事实，不做推测
 
-**分析结果分别写入**：
+**分析结果分别写入**（与输入文件同目录）：
 ```
-写入：$TOOL_DIR/wechat_analysis_output/personality_result.json  （自己）
-写入：$TOOL_DIR/wechat_analysis_output/partner_result.json      （对方，若有数据）
+写入：<output_dir>/personality_result.json  （自己）
+写入：<output_dir>/partner_result.json      （对方，若有数据）
 ```
 
 **输出 JSON 结构**：
@@ -289,14 +280,14 @@ $TOOL_DIR/wechat_analysis_output/partner_input.json（若存在）
 
 ```bash
 cd "$TOOL_DIR" && "$VENV/bin/python" main.py "$CSV_PATH" \
-  --personality-result wechat_analysis_output/personality_result.json \
-  --partner-personality-result wechat_analysis_output/partner_result.json \
+  --personality-result <output_dir>/personality_result.json \
+  --partner-personality-result <output_dir>/partner_result.json \
   --partner-name "<联系人名>" 2>&1
 ```
 
 若无对方分析结果，省略 `--partner-personality-result` 参数，以单人模式生成报告。
 
-生成文件：
+生成文件（均位于 `<output_dir>/`，即 `wechat_analysis_output/<联系人名>/`）：
 - `report.html` + `report.css`（完整 HTML 报告及样式）
 - `charts/radar.png`（单人模式下的 Big Five 雷达图）
 - `personality_raw.json`（最终人格分析原始数据备份）
@@ -308,13 +299,13 @@ cd "$TOOL_DIR" && "$VENV/bin/python" main.py "$CSV_PATH" \
 **触发条件**：自动
 
 ```bash
-open "$TOOL_DIR/wechat_analysis_output/report.html"
+open "$TOOL_DIR/wechat_analysis_output/<联系人名>/report.html"
 ```
 
 **Skill 最终告知用户**：
 - 报告已在浏览器打开
-- 图表截图路径：`wechat_analysis_output/charts/`
-- 如需清理导出的原始消息文件：`rm "$TOOL_DIR"/export_*.csv`
+- 所有输出文件位于 `wechat_analysis_output/<联系人名>/`
+- 分析其他人时自动创建独立子目录，互不干扰
 
 若 SIP 仍为关闭状态，提示用户重新开启：
 

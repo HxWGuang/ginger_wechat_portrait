@@ -25,6 +25,16 @@ _SCRIPT_DIR = Path(__file__).parent
 _CONFIG_PATH = _SCRIPT_DIR / 'config.json'
 
 
+def _safe_filename(name: str) -> str:
+    """将联系人名转为安全的文件名（保留中文，替换文件系统不安全字符）。"""
+    unsafe = {'/', '\\', ':', '*', '?', '"', '<', '>', '|'}
+    result = ''.join(c if c not in unsafe else '_' for c in name)
+    result = result.replace(' ', '_')
+    result = result.strip().rstrip('.')
+    return result[:60] or 'contact'
+
+
+
 def load_config() -> dict:
     if _CONFIG_PATH.exists():
         with open(_CONFIG_PATH) as f:
@@ -129,10 +139,17 @@ def get_self_wxid(db_dir: Path) -> str:
     import glob
 
     # 方法1：从 WeChat 原始数据目录找 wxid_ 开头的文件夹
+    # 目录名格式: wxid_<id>_<hash>，需要去掉末尾 hash 后缀才能在 Name2Id 匹配
     wechat_dir = Path.home() / 'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files'
     if wechat_dir.exists():
-        candidates = [d.name.split('_0ad')[0] for d in wechat_dir.iterdir()
-                      if d.is_dir() and d.name.startswith('wxid_')]
+        candidates = []
+        for d in wechat_dir.iterdir():
+            if d.is_dir() and d.name.startswith('wxid_'):
+                name = d.name
+                # 去掉末尾 hash 后缀：_0ad... 或 _XXXX (4位hex)
+                import re
+                name = re.sub(r'_(?:0ad|0x)?[0-9a-f]{3,}[a-z]*$', '', name)
+                candidates.append(name)
         if len(candidates) == 1:
             return candidates[0]
 
@@ -392,12 +409,13 @@ def main():
         sys.exit(1)
     print(f"[*] 自己的 wxid：{self_wxid}")
 
+    safe_name = _safe_filename(contact_name)
     if args.output:
         output_path = Path(args.output)
     else:
-        safe_name = contact_name.encode('ascii', 'ignore').decode() or 'contact'
-        safe_name = safe_name.replace('/', '_').replace(' ', '_')[:20] or 'contact'
-        output_path = _SCRIPT_DIR / f"export_{safe_name}.csv"
+        output_dir = _SCRIPT_DIR / 'wechat_analysis_output' / safe_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"export_{safe_name}.csv"
 
     export_messages(db_dir, username, contact_name, self_wxid, output_path)
 

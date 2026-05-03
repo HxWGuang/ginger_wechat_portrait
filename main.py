@@ -15,6 +15,7 @@
 选项：
   --output DIR                        输出目录（默认 ./wechat_analysis_output）
   --sample-size N                     供 Claude 分析的采样消息数上限（默认 100）
+  --full                              全量分析模式：使用所有过滤后消息（上限 3000 条）
   --personality-result FILE           自己的人格分析结果 JSON
   --partner-personality-result FILE   对方的人格分析结果 JSON
   --partner-name NAME                 对方的名字（默认"对方"）
@@ -31,6 +32,7 @@ import data_loader
 from data_loader import _replace_wechat_emoji
 import report as report_mod
 import sampler
+from sampler import full_sample
 import stats as stats_mod
 import visualizer
 from personality import extract_features
@@ -85,6 +87,8 @@ def main():
     parser.add_argument('--output', default='./wechat_analysis_output')
     parser.add_argument('--sample-size', type=int, default=100,
                         help='供 Claude 分析的采样消息数上限（默认 100）')
+    parser.add_argument('--full', action='store_true',
+                        help='全量分析模式：使用所有过滤后消息（上限 3000 条），跳过采样')
     parser.add_argument('--personality-result', default=None,
                         help='自己的人格分析结果 JSON 文件')
     parser.add_argument('--partner-personality-result', default=None,
@@ -99,7 +103,12 @@ def main():
         print(f'❌ 文件不存在：{args.csv_file}')
         sys.exit(1)
 
-    output_dir = args.output
+    # 按联系人隔离输出目录，避免多人分析时文件混杂
+    # 始终从 CSV 文件名推导，确保 step 8a 和 8c 使用同一目录
+    contact_dir = os.path.splitext(os.path.basename(args.csv_file))[0]
+    if contact_dir.startswith('export_'):
+        contact_dir = contact_dir[7:]  # 去掉 export_ 前缀
+    output_dir = os.path.join(args.output, contact_dir)
     charts_dir = os.path.join(output_dir, 'charts')
     os.makedirs(charts_dir, exist_ok=True)
 
@@ -133,11 +142,21 @@ def main():
         df_partner = None
         print('   ⚠️  无法加载对方消息')
 
+    # If self has no messages, use partner data as primary for charts
+    if len(df) == 0 and df_partner is not None and len(df_partner) > 0:
+        print('💡 自己没有文本消息，将使用对方数据生成图表。')
+        df_for_charts = df_partner
+    else:
+        df_for_charts = df
+
     # ── Step 2: 统计分析 ────────────────────────────────────────────────────
     print('\n📊 正在计算统计数据...')
-    stats = stats_mod.compute(df)
+    stats = stats_mod.compute(df_for_charts)
     dr = stats['date_range']
-    print(f'   时间跨度：{dr[0].strftime("%Y-%m-%d")} → {dr[1].strftime("%Y-%m-%d")}')
+    try:
+        print(f'   时间跨度：{dr[0].strftime("%Y-%m-%d")} → {dr[1].strftime("%Y-%m-%d")}')
+    except (ValueError, AttributeError):
+        print('   时间跨度：无有效时间数据')
     print(f'   平均消息长度：{stats["avg_length"]} 字')
     print(f'   最活跃时段：{stats["hourly"].idxmax()}:00')
 
@@ -164,14 +183,17 @@ def main():
     personality_result: dict = {}
     partner_personality: dict = {}
 
-    if args.personality_result:
+    if args.personality_result or args.partner_personality_result:
         # 模式B：读取 Claude 写入的结果，生成完整报告
-        if not os.path.exists(args.personality_result):
-            print(f'❌ 找不到人格分析结果文件：{args.personality_result}')
-            sys.exit(1)
-        with open(args.personality_result, encoding='utf-8') as f:
-            personality_result = _fix_emoji(json.load(f))
-        print(f'\n🧠 已读取自己的人格分析结果：{args.personality_result}')
+        if args.personality_result:
+            if not os.path.exists(args.personality_result):
+                print(f'❌ 找不到人格分析结果文件：{args.personality_result}')
+                sys.exit(1)
+            with open(args.personality_result, encoding='utf-8') as f:
+                personality_result = _fix_emoji(json.load(f))
+            print(f'\n🧠 已读取自己的人格分析结果：{args.personality_result}')
+        else:
+            print('\n🧠 无自己的人格分析结果，仅生成对方分析报告')
 
         if args.partner_personality_result:
             if not os.path.exists(args.partner_personality_result):
@@ -181,7 +203,7 @@ def main():
                     partner_personality = _fix_emoji(json.load(f))
                 print(f'🧠 已读取对方（{partner_name}）的人格分析结果')
 
-        big5 = personality_result.get('big5', {})
+        big5 = personality_result.get('big5', {}) if personality_result else {}
         if big5:
             scores = {k: v.get('score', 50) for k, v in big5.items()}
             radar = visualizer.big5_radar(scores)
@@ -190,33 +212,62 @@ def main():
     else:
         # 模式A（默认）：采样消息，导出 personality_input.json 供 Claude 分析
         print('\n🧠 正在采样消息，准备人格分析输入...')
-        clean_df = data_loader.filter_for_personality(df)
-        messages = sampler.smart_sample(clean_df, target_n=args.sample_size)
-        features = extract_features(messages)
-        top_words = sorted(stats['word_freq'].items(), key=lambda x: x[1], reverse=True)[:30]
 
-        ai_input = {
-            'sample_messages': messages,
-            'top_words': [{'word': w, 'count': c} for w, c in top_words],
-            'features': features,
-            'stats_summary': {
-                'date_range': [dr[0].strftime('%Y-%m-%d'), dr[1].strftime('%Y-%m-%d')],
-                'total_messages': stats['total_messages'],
-                'avg_length': stats['avg_length'],
-                'most_active_hour': int(stats['hourly'].idxmax()),
-            },
-        }
-        input_path = os.path.join(output_dir, 'personality_input.json')
-        with open(input_path, 'w', encoding='utf-8') as f:
-            json.dump(ai_input, f, ensure_ascii=False, indent=2)
-        print(f'   自己：已采样 {len(messages)} 条消息 → {input_path}')
+        # Self-personality input (skip if no self messages)
+        if len(df) > 0:
+            clean_df = data_loader.filter_for_personality(df)
+            all_clean = clean_df['content'].tolist()
+
+            if args.full:
+                messages = full_sample(clean_df)
+                mode_label = '全量'
+            else:
+                messages = sampler.smart_sample(clean_df, target_n=args.sample_size)
+                mode_label = '采样'
+
+            # 量化特征始终基于全量过滤后消息计算，提高统计精度
+            features = extract_features(all_clean)
+            top_words = sorted(stats['word_freq'].items(), key=lambda x: x[1], reverse=True)[:30]
+
+            ai_input = {
+                'sample_messages': messages,
+                'top_words': [{'word': w, 'count': c} for w, c in top_words],
+                'features': features,
+                'stats_summary': {
+                    'date_range': [
+                        dr[0].strftime('%Y-%m-%d') if hasattr(dr[0], 'strftime') else str(dr[0]),
+                        dr[1].strftime('%Y-%m-%d') if hasattr(dr[1], 'strftime') else str(dr[1]),
+                    ],
+                    'total_messages': stats['total_messages'],
+                    'avg_length': stats['avg_length'],
+                    'most_active_hour': int(stats['hourly'].idxmax()),
+                },
+            }
+            input_path = os.path.join(output_dir, 'personality_input.json')
+            with open(input_path, 'w', encoding='utf-8') as f:
+                json.dump(ai_input, f, ensure_ascii=False, indent=2)
+            total_clean = len(all_clean)
+            if args.full and total_clean > 3000:
+                print(f'   自己：全量 {total_clean} 条 → 截取上限 3000 条 → {input_path}')
+            else:
+                print(f'   自己：已{mode_label} {len(messages)} 条消息（过滤后共 {total_clean} 条）→ {input_path}')
+        else:
+            print('   自己：无文本消息，跳过 personality_input.json')
 
         # 生成对方的分析输入
         if df_partner is not None and len(df_partner) > 0 and partner_stats is not None:
             clean_partner = data_loader.filter_for_personality(df_partner)
             if len(clean_partner) > 0:
-                partner_messages = sampler.smart_sample(clean_partner, target_n=args.sample_size)
-                partner_features = extract_features(partner_messages)
+                all_clean_partner = clean_partner['content'].tolist()
+
+                if args.full:
+                    partner_messages = full_sample(clean_partner)
+                    partner_mode_label = '全量'
+                else:
+                    partner_messages = sampler.smart_sample(clean_partner, target_n=args.sample_size)
+                    partner_mode_label = '采样'
+
+                partner_features = extract_features(all_clean_partner)
                 partner_top_words = sorted(
                     partner_stats['word_freq'].items(), key=lambda x: x[1], reverse=True
                 )[:30]
@@ -226,7 +277,10 @@ def main():
                     'top_words': [{'word': w, 'count': c} for w, c in partner_top_words],
                     'features': partner_features,
                     'stats_summary': {
-                        'date_range': [partner_dr[0].strftime('%Y-%m-%d'), partner_dr[1].strftime('%Y-%m-%d')],
+                        'date_range': [
+                            partner_dr[0].strftime('%Y-%m-%d') if hasattr(partner_dr[0], 'strftime') else str(partner_dr[0]),
+                            partner_dr[1].strftime('%Y-%m-%d') if hasattr(partner_dr[1], 'strftime') else str(partner_dr[1]),
+                        ],
                         'total_messages': partner_stats['total_messages'],
                         'avg_length': partner_stats['avg_length'],
                         'most_active_hour': int(partner_stats['hourly'].idxmax()),
@@ -235,7 +289,11 @@ def main():
                 partner_path = os.path.join(output_dir, 'partner_input.json')
                 with open(partner_path, 'w', encoding='utf-8') as f:
                     json.dump(partner_ai_input, f, ensure_ascii=False, indent=2)
-                print(f'   对方：已采样 {len(partner_messages)} 条消息 → {partner_path}')
+                total_clean_partner = len(all_clean_partner)
+                if args.full and total_clean_partner > 3000:
+                    print(f'   对方：全量 {total_clean_partner} 条 → 截取上限 3000 条 → {partner_path}')
+                else:
+                    print(f'   对方：已{partner_mode_label} {len(partner_messages)} 条消息（过滤后共 {total_clean_partner} 条）→ {partner_path}')
             else:
                 print('   ⚠️  对方消息过滤后为空，跳过对方分析输入生成')
         else:
