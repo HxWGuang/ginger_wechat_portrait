@@ -46,7 +46,7 @@ def compute(df: pd.DataFrame) -> dict:
         'total_messages': len(df),
         'total_chars':    int(df['content'].str.len().sum()),
         'avg_length':     round(df['content'].str.len().mean(), 1),
-        'date_range':     (df['datetime'].min(), df['datetime'].max()),
+        'date_range':     (df['datetime'].dropna().min(), df['datetime'].dropna().max()),
         'daily':          df.groupby('date').size(),
         'hourly':         df.groupby('hour').size().reindex(range(24), fill_value=0),
         'monthly':        df.groupby('month').size(),

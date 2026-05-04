@@ -41,7 +41,7 @@ def _score(text: str) -> int:
 
 def full_sample(df: pd.DataFrame, max_n: int = 3000) -> List[str]:
     """
-    返回所有过滤后消息（打乱），适用于全量分析模式。
+    返回所有过滤后消息（去重、打乱），适用于全量分析模式。
     max_n 为安全上限，防止上下文溢出；超过上限时截取最高分消息。
     """
     if len(df) == 0:
