@@ -67,13 +67,22 @@ VENV="$TOOL_DIR/.venv"
 
 **触发条件**：自动，检测 `~/Documents/wechat-db-decrypt-macos` 是否存在
 
+首次需安装两个外部工具：
+
 ```bash
+# 1. 微信数据库解密工具（Thearas/wechat-db-decrypt-macos）
 [ ! -d "$DECRYPT_TOOL" ] && \
   git clone https://github.com/Thearas/wechat-db-decrypt-macos.git "$DECRYPT_TOOL"
+
+# 2. C 内存扫描器（ylytdeng/wechat-decrypt，用于 WeChat 4.1+ 密钥提取）
+[ ! -d /tmp/wechat-decrypt ] && \
+  git clone https://github.com/ylytdeng/wechat-decrypt.git /tmp/wechat-decrypt && \
+  cc -O2 -o /tmp/wechat-decrypt/find_all_keys_macos /tmp/wechat-decrypt/find_all_keys_macos.c -framework Foundation
+
 which sqlcipher >/dev/null 2>&1 || brew install sqlcipher
 ```
 
-首次约需 10 秒，后续跳过。
+首次约需 15 秒，后续跳过。
 
 ---
 

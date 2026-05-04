@@ -80,7 +80,7 @@ python main.py export_xxx.csv --sample-size 500
 python main.py export_xxx.csv --full
 
 # 自定义自己和对方的名字（默认从 CSV 文件名推断）
-python main.py export_xxx.csv --self-name "我" --partner-name "唐乐"
+python main.py export_xxx.csv --self-name "我" --partner-name "小明"
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -97,23 +97,24 @@ python main.py export_xxx.csv --self-name "我" --partner-name "唐乐"
 
 ## 需要手动完成的前置步骤
 
-以下两步是**一次性操作**，完成后后续所有分析均全自动。
+以下是一次性操作，完成后后续所有分析均全自动。
 
-### 步骤一：关闭 SIP（系统完整性保护）
+### 密钥提取（仅首次，二选一）
 
-macOS 的 SIP 会阻止读取微信进程中的加密密钥，必须先在恢复模式中关闭一次。
+微信聊天数据库使用 SQLCipher 加密，首次使用需要从微信进程内存中提取密钥。
 
-**详细步骤见 [安装指南.md](./安装指南.md)**
+**方案 A（推荐）：sudo 运行内存扫描器**
 
-### 步骤二：手动运行密钥提取脚本
+Skill 会自动从 [ylytdeng/wechat-decrypt](https://github.com/ylytdeng/wechat-decrypt) 克隆并编译 C 扫描器，你只需在 Terminal.app 中执行一次 `sudo` 命令，约 10 秒完成。
 
-密钥提取需要调试器权限（lldb），Claude Code 子进程不具备此权限，**必须在系统 Terminal.app 中手动运行**。
+**方案 B：给微信做 ad-hoc 重签名**
 
-Skill 会给出完整命令，你复制粘贴到 Terminal.app 执行，然后在微信里依次点开几个聊天窗口触发密钥捕获即可。
+```bash
+sudo codesign --force --deep --sign - /Applications/WeChat.app
+```
+重签名后重启微信，之后无需 sudo 也可运行扫描器。
 
-**完整操作说明见 [安装指南.md](./安装指南.md)**
-
-> 这两步只需做一次。完成后可以立刻重新开启 SIP，之后所有分析完全自动。
+> 两种方案都**不需要关闭 SIP**（与旧版不同）。详细说明见 [安装指南.md](./安装指南.md)
 
 ---
 
@@ -137,23 +138,25 @@ Skill 会给出完整命令，你复制粘贴到 Terminal.app 执行，然后在
 
 ```
 wechat_analysis_output/
-├── 唐乐/
-│   ├── report.html              ← 完整 HTML 报告（浏览器打开）
-│   ├── report.css               ← 报告样式文件（与 report.html 同目录）
-│   ├── personality_result.json  ← 自己的 AI 分析结果
-│   ├── partner_result.json      ← 对方的 AI 分析结果（双人模式）
-│   ├── personality_input.json   ← 分析输入（消息样本 + 统计）
-│   ├── partner_input.json       ← 对方的分析输入
-│   ├── personality_raw.json     ← 最终输出的分析原始数据
+├── 小明/
+│   ├── export_小明.csv            ← 导出的原始消息（中间文件）
+│   ├── export_小明.json
+│   ├── export_小明.meta.json      ← 昵称、头像等元数据
+│   ├── report.html                ← 完整 HTML 报告（浏览器打开）
+│   ├── report.css
+│   ├── personality_result.json    ← 自己的 AI 分析结果
+│   ├── partner_result.json        ← 对方的 AI 分析结果（双人模式）
+│   ├── personality_input.json     ← 分析输入（消息样本 + 统计）
+│   ├── partner_input.json         ← 对方的分析输入
+│   ├── personality_raw.json       ← 分析原始数据备份
 │   └── charts/
-│       ├── hourly.png           ← 24 小时发消息分布
-│       ├── monthly_trend.png    ← 月度消息趋势
-│       ├── weekday_bar.png      ← 星期分布
-│       ├── word_cloud_pair.png  ← 双人高频词词云（有对方数据时）
-│       ├── word_cloud.png       ← 单人词云（仅自己数据时）
-│       ├── length_dist.png      ← 消息长度分布
-│       └── radar.png            ← Big Five 雷达图（单人模式）
-├── 小明/                        ← 分析其他人时自动创建独立子目录
+│       ├── hourly.png             ← 24 小时发消息分布
+│       ├── monthly_trend.png      ← 月度消息趋势
+│       ├── weekday_bar.png        ← 星期分布
+│       ├── word_cloud_pair.png    ← 双人高频词词云
+│       ├── length_dist.png        ← 消息长度分布
+│       └── radar.png              ← Big Five 雷达图
+├── 小红/                          ← 分析其他人时自动创建独立子目录
 └── ...
 ```
 
