@@ -37,7 +37,7 @@ source "$VENV/bin/activate"
 
 ### 步骤 2：安装解密工具（自动，首次）
 
-解密工具依赖 `sqlcipher`（用于解密数据库）和系统自带的 `lldb`（用于提取密钥，需要 SIP 关闭）。
+解密工具依赖 `sqlcipher`（用于解密数据库）和 C 内存扫描器（`find_all_keys_macos`，用于提取密钥，需要 sudo 或对微信 ad-hoc 重签名）。
 
 ```bash
 # 安装解密工具仓库
@@ -48,15 +48,21 @@ else
   echo "DECRYPT_EXISTS"
 fi
 
+# 安装 C 内存扫描器（WeChat 4.1+ 密钥提取）
+if [ ! -d /tmp/wechat-decrypt ]; then
+  git clone https://github.com/ylytdeng/wechat-decrypt.git /tmp/wechat-decrypt && \
+    cc -O2 -o /tmp/wechat-decrypt/find_all_keys_macos /tmp/wechat-decrypt/find_all_keys_macos.c -framework Foundation
+fi
+
 # 检查并安装 sqlcipher
 which sqlcipher >/dev/null 2>&1 || brew install sqlcipher
 ```
 
 ---
 
-### 步骤 3：三级状态检查（最小化 SIP 操作）
+### 步骤 3：三级状态检查
 
-> 核心原则：只有在密钥文件不存在时才需要 SIP 关闭。已解密的用户永远不需要再碰 SIP。
+> 核心原则：密钥提取仅需一次。已提取过密钥的用户永远不需要再次提取。
 
 #### Level 1：检查解密数据库是否已存在
 
@@ -64,17 +70,25 @@ which sqlcipher >/dev/null 2>&1 || brew install sqlcipher
 ls "$DECRYPT_TOOL/decrypted/"*.db 2>/dev/null && echo "DB_FOUND" || echo "DB_NOT_FOUND"
 ```
 
-**若 `DB_FOUND`**：数据库就绪，直接跳到步骤 5（询问联系人），完全跳过所有 SIP 相关步骤。
+**若 `DB_FOUND`**：使用 AskUserQuestion 询问用户选择：
+
+> "检测到本地已有解密后的数据库。是否重新解密以获取微信中最新的聊天记录？"
+
+选项 1（推荐）：**「重新解密」——删除旧解密文件，从微信重新解密拉取最新数据**
+选项 2：**「直接使用」——跳过解密，直接复用现有数据库进行后续分析**
+
+- 若用户选「重新解密」：执行 `rm -rf "$DECRYPT_TOOL/decrypted/"`，然后进入 Level 2 检查密钥（密钥存在则直接执行 `decrypt_db.py`）。
+- 若用户选「直接使用」：跳到步骤 5（询问联系人），跳过所有解密步骤。
 
 ---
 
-#### Level 2：检查密钥文件是否已存在（SIP 无关）
+#### Level 2：检查密钥文件是否已存在
 
 ```bash
 ls "$DECRYPT_TOOL/wechat_keys.json" 2>/dev/null && echo "KEY_FOUND" || echo "KEY_NOT_FOUND"
 ```
 
-**若 `KEY_FOUND`**：密钥已提取，`decrypt_db.py` 不需要 SIP，直接执行：
+**若 `KEY_FOUND`**：密钥已提取，直接执行解密：
 
 ```bash
 cd "$DECRYPT_TOOL" && python3 decrypt_db.py 2>&1
@@ -84,58 +98,71 @@ cd "$DECRYPT_TOOL" && python3 decrypt_db.py 2>&1
 
 ---
 
-#### Level 3：两者均不存在，需要 SIP 关闭
+#### Level 3：两者均不存在 → 需要提取密钥
+
+检查微信进程是否在运行：
 
 ```bash
-csrutil status
+pgrep -x WeChat >/dev/null 2>&1 && echo "WECHAT_RUNNING" || echo "WECHAT_NOT_RUNNING"
 ```
 
-- 若输出包含 `enabled`：**停止并告知用户**：
-  > "需要先关闭 SIP 才能提取微信密钥（仅此一次）。完成后重新运行此命令，之后永久不需要再关闭 SIP。
-  >
-  > 步骤：关机 → 按住电源键进入恢复模式 → 实用工具 → 终端 → `csrutil disable` → `reboot`"
-
-- 若输出包含 `disabled`：继续步骤 4。
+- 若 `WECHAT_NOT_RUNNING`：**停止**，告知用户需要先打开并登录微信 Mac 客户端。
+- 若 `WECHAT_RUNNING`：继续步骤 4。
 
 ---
 
-### 步骤 4：提取密钥（需要 SIP 关闭，仅此一次）
+### 步骤 4：提取密钥（仅此一次）
+
+> **背景**：微信 4.1.x 改变了加密机制，旧版 lldb 断点方案（`find_key.py`）已不再适用。现改用 C 内存扫描器（`find_all_keys_macos`），通过 Mach VM API 直接扫描微信进程内存。
 
 先用 AskUserQuestion 确认：
-> "准备从微信内存提取密钥。请确认：① 微信 Mac 客户端当前处于登录状态 ② 近期在微信里打开过几个对话。确认后继续。"
+> "准备从微信内存提取密钥。请确认：微信 Mac 客户端当前处于登录状态。确认后继续。"
 
+**操作流程**：
+
+1. Skill 已在步骤 2 自动 clone 并编译了 C 扫描器到 `/tmp/wechat-decrypt/find_all_keys_macos`
+2. 用户收到命令后在 **Terminal.app** 中执行（需要输入 sudo 密码）：
+
+   ```bash
+   sudo /tmp/wechat-decrypt/find_all_keys_macos
+   ```
+
+3. 扫描完成后生成 `all_keys.json`
+4. Skill 自动将 `all_keys.json` 转换为 `wechat_keys.json` 格式，复制到 `$DECRYPT_TOOL/`：
+
+   ```bash
+   python3 -c "
+   import json
+   with open('/tmp/wechat-decrypt/all_keys.json') as f:
+       data = json.load(f)
+   result = {}
+   for entry in data:
+       path = entry.get('path', '')
+       key = entry.get('key', '')
+       if path and key:
+           result[path] = key
+   with open('$DECRYPT_TOOL/wechat_keys.json', 'w') as f:
+       json.dump(result, f, indent=2)
+   "
+   ```
+
+5. 密钥提取完成，继续执行解密。
+
+**替代方案**（避免每次 sudo）：
 ```bash
-LLDB_PYTHON="/Library/Developer/CommandLineTools/Library/PrivateFrameworks/LLDB.framework/Versions/A/Resources/Python"
-cd "$DECRYPT_TOOL" && PYTHONPATH="$LLDB_PYTHON" /Library/Developer/CommandLineTools/usr/bin/python3.9 find_key.py 2>&1
-# 成功后生成 wechat_keys.json
+sudo codesign --force --deep --sign - /Applications/WeChat.app
 ```
+重签名后重启微信，之后可无需 sudo 运行扫描器。
 
-> ⚠️ **此命令必须在系统 Terminal.app 中手动运行，不能通过 Claude Code 执行。**
-> lldb 附加进程需要 taskport 权限，Claude Code 的子进程不具备此权限。
->
-> **用户操作步骤：**
-> 1. 打开 Terminal.app（不是 Claude Code 终端）
-> 2. 复制粘贴上方命令执行
-> 3. 看到提示后的操作见下方说明
+**错误处理**：
 
-> **注意：此步骤需要用户配合操作**
-> 1. 脚本启动后会附加到微信进程，期间微信界面会短暂卡住（约 2-5 分钟，正在扫描内存）
-> 2. 微信恢复响应后，**切换到微信，依次点开 3-5 个不同的聊天窗口**，每次点开触发一次密钥捕获
-> 3. 终端输出 `[!] Found new key!` 后说明捕获成功
-> 4. 按 Ctrl+C 停止脚本，`wechat_keys.json` 自动保存
+| 错误 | 处理方式 |
+|------|---------|
+| `task_for_pid failed: 5` | 需要 sudo，或用 ad-hoc 重签名 |
+| 编译失败 | 确认 Xcode Command Line Tools 已安装：`xcode-select --install` |
+| 微信未启动 | 打开微信并登录后重试 |
 
-- 若失败报架构错误：改用 `arch -arm64 /Library/Developer/CommandLineTools/usr/bin/python3.9 find_key.py`
-- 若失败报 `ModuleNotFoundError: No module named 'lldb'`：确认使用的是 Python 3.9，`_lldb` 只支持 3.9
-- 若失败报 Permission denied：SIP 未关闭，返回 Level 3
-
-**密钥提取成功后立即告知用户：**
-> "密钥已提取完成！现在可以重新开启 SIP 了——后续解密和所有分析都不需要 SIP。
->
-> 重新开启 SIP：关机 → 恢复模式 → `csrutil enable` → `reboot`
->
-> 也可以先不重启，继续完成本次解密后再重启。"
-
-然后执行解密：
+密钥提取成功后执行解密：
 
 ```bash
 cd "$DECRYPT_TOOL" && python3 decrypt_db.py 2>&1
@@ -282,19 +309,6 @@ open "$TOOL_DIR/wechat_analysis_output/report.html"
 - 图表图片在 `wechat_analysis_output/charts/`（可直接截图用于发布）
 - 如需清理导出的消息文件：`rm "$TOOL_DIR"/export_*.csv`
 
-然后检查 SIP 状态，若仍为关闭状态，提示用户重新开启：
-
-```bash
-csrutil status
-```
-
-若输出包含 `disabled`，告知用户：
-> "安全提醒：数据库解密已完成，建议现在重新开启 SIP 以恢复系统保护。
->
-> 步骤：关机 → 按住电源键进入恢复模式 → 终端执行 csrutil enable → reboot
->
-> 重新开启 SIP 不影响已解密的数据库文件，下次分析无需再次解密。"
-
 ---
 
 ## 错误速查
@@ -302,9 +316,11 @@ csrutil status
 | 错误 | 自动处理 | 需用户操作 |
 |------|---------|-----------|
 | ModuleNotFoundError | 自动 pip install | — |
-| 解密工具未安装 | 自动 git clone | — |
-| SIP 已启用 | 停止并提示 | 按安装指南第 1 步关闭 SIP |
+| 解密工具未安装 | 自动 git clone + 编译 | — |
+| 密钥提取失败（权限） | 提示检查 sudo / 重签名 | 用 sudo 运行或重签名微信 |
+| 密钥提取失败（编译） | — | 安装 Xcode Command Line Tools |
 | 微信未登录 | 提示确认后重试 | 打开微信并登录 |
 | 联系人未找到 | 展示联系人列表 | 确认正确的联系人名称 |
+| 多个同名联系人 | 展示列表 | 输入编号选择 |
 | personality_input.json 不存在 | 重新运行步骤 8a | — |
 | 数据库路径不存在 | 重新搜索路径 | 若仍失败则重新执行解密 |

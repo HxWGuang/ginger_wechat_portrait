@@ -1,6 +1,6 @@
 # 本次运行修复记录
 
-本文档记录了从零开始运行 `/analyze-wechat "TUZI 唐乐"` 过程中发现并修复的所有问题。
+本文档记录了从零开始运行 `/analyze-wechat "小明"` 过程中发现并修复的所有问题。
 
 ---
 
@@ -182,8 +182,8 @@ df['datetime'] = (
 修复 2（发送者识别）修正了 CSV 中的 `is_sender` 标记，但**人格分析结果文件是在修复前写入的**。修复后重跑 `main.py` 时，脚本重新生成了正确的 `personality_input.json` 和 `partner_input.json`（样本正确归属于双方），但 `main.py --personality-result` 模式下直接读取旧的 result JSON 生成报告，**不会自动重新分析**。
 
 这导致报告中引用的某些原文片段归属错误，例如：
-- nightynight 说的「你喝茶救星球吗？我给你们点」出现在 TUZI 的分析中
-- TUZI 说的「有点忧伤 感觉是离别季主题」出现在 nightynight 的分析中
+- 小红 说的「你喝茶救星球吗？我给你们点」出现在 小明 的分析中
+- 小明 说的「有点忧伤 感觉是离别季主题」出现在 小红 的分析中
 
 ### 修复
 
@@ -191,10 +191,10 @@ df['datetime'] = (
 
 | 原文 | 正确归属 | 所在文件 |
 |------|---------|---------|
-| 「我虽然喜欢游戏，但我感觉我更喜欢真实的世界吧」 | nightynight | personality_input.json |
-| 「你喝茶救星球吗？我给你们点，喝点东西舒服些」 | nightynight | personality_input.json |
-| 「我觉得你又不胖，不挺好的嘛」 | nightynight | personality_input.json |
-| 「有点忧伤 感觉是离别季主题」 | TUZI 唐乐 | partner_input.json |
+| 「我虽然喜欢游戏，但我感觉我更喜欢真实的世界吧」 | 小红 | personality_input.json |
+| 「你喝茶救星球吗？我给你们点，喝点东西舒服些」 | 小红 | personality_input.json |
+| 「我觉得你又不胖，不挺好的嘛」 | 小红 | personality_input.json |
+| 「有点忧伤 感觉是离别季主题」 | 小明 | partner_input.json |
 
 ### 教训
 
