@@ -39,7 +39,7 @@
 **克隆仓库，在目录内打开 Claude Code，即可使用。**
 
 ```bash
-git clone https://github.com/Jiang59991/wechat-analyzer.git ~/wechat-analyzer
+git clone git@github.com:HxWGuang/ginger_wechat_portrait.git ~/wechat-analyzer
 cd ~/wechat-analyzer
 claude
 ```
@@ -67,6 +67,31 @@ claude
 ```
 
 **Skill 会自动完成从安装依赖到生成报告的全部流程。**
+
+### 高级选项
+
+`main.py` 支持以下命令行参数，在 Step 9a 环节生效：
+
+```bash
+# 调整采样量（默认 100 条，增大可获得更精准的分析）
+python main.py export_xxx.csv --sample-size 500
+
+# 全量分析：使用所有过滤后消息（上限 3000 条），不进行采样
+python main.py export_xxx.csv --full
+
+# 自定义自己和对方的名字（默认从 CSV 文件名推断）
+python main.py export_xxx.csv --self-name "我" --partner-name "唐乐"
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--sample-size N` | 100 | 采样消息数上限 |
+| `--full` | 关闭 | 全量分析模式，跳过采样 |
+| `--output DIR` | `./wechat_analysis_output` | 输出根目录（每个联系人自动创建子目录） |
+| `--self-name NAME` | 从 meta 读取 | 自己的显示名 |
+| `--partner-name NAME` | 从 meta 读取 | 对方的显示名 |
+
+> 量化语言特征（观点词率、情绪词率等）**始终基于全部过滤后消息计算**，不受采样量影响，确保统计指标尽可能精准。
 
 ---
 
@@ -108,23 +133,28 @@ Skill 会给出完整命令，你复制粘贴到 Terminal.app 执行，然后在
 
 ## 输出文件
 
-分析完成后，所有文件保存在工具目录的 `wechat_analysis_output/` 下（默认 `~/.claude/wechat-analyzer/wechat_analysis_output/`）：
+分析完成后，所有文件保存在工具目录的 `wechat_analysis_output/` 下（默认 `~/.claude/wechat-analyzer/wechat_analysis_output/`），**按联系人自动创建独立子目录**，分析多人时互不干扰：
 
 ```
 wechat_analysis_output/
-├── report.html              ← 完整 HTML 报告（浏览器打开）
-├── report.css               ← 报告样式文件（与 report.html 同目录）
-├── personality_result.json  ← 自己的 AI 分析结果
-├── partner_result.json      ← 对方的 AI 分析结果（双人模式）
-├── personality_raw.json     ← 最终输出的分析原始数据
-└── charts/
-    ├── hourly.png           ← 24 小时发消息分布
-    ├── monthly_trend.png    ← 月度消息趋势
-    ├── weekday_bar.png      ← 星期分布
-    ├── word_cloud_pair.png  ← 双人高频词词云（有对方数据时）
-    ├── word_cloud.png       ← 单人词云（仅自己数据时）
-    ├── length_dist.png      ← 消息长度分布
-    └── radar.png            ← Big Five 雷达图（单人模式）
+├── 唐乐/
+│   ├── report.html              ← 完整 HTML 报告（浏览器打开）
+│   ├── report.css               ← 报告样式文件（与 report.html 同目录）
+│   ├── personality_result.json  ← 自己的 AI 分析结果
+│   ├── partner_result.json      ← 对方的 AI 分析结果（双人模式）
+│   ├── personality_input.json   ← 分析输入（消息样本 + 统计）
+│   ├── partner_input.json       ← 对方的分析输入
+│   ├── personality_raw.json     ← 最终输出的分析原始数据
+│   └── charts/
+│       ├── hourly.png           ← 24 小时发消息分布
+│       ├── monthly_trend.png    ← 月度消息趋势
+│       ├── weekday_bar.png      ← 星期分布
+│       ├── word_cloud_pair.png  ← 双人高频词词云（有对方数据时）
+│       ├── word_cloud.png       ← 单人词云（仅自己数据时）
+│       ├── length_dist.png      ← 消息长度分布
+│       └── radar.png            ← Big Five 雷达图（单人模式）
+├── 小明/                        ← 分析其他人时自动创建独立子目录
+└── ...
 ```
 
 ---

@@ -201,6 +201,16 @@ cd "$TOOL_DIR" && "$VENV/bin/python" export_contact.py --contact "<联系人名>
 cd "$TOOL_DIR" && "$VENV/bin/python" main.py "$CSV_PATH" 2>&1
 ```
 
+默认采样 100 条消息用于人格分析。如需更高精度，可使用：
+
+```bash
+# 增大采样量
+"$VENV/bin/python" main.py "$CSV_PATH" --sample-size 500
+
+# 全量分析（使用所有过滤后消息，上限 3000 条）
+"$VENV/bin/python" main.py "$CSV_PATH" --full
+```
+
 生成内容（均位于 `wechat_analysis_output/<联系人名>/` 下）：
 - `charts/hourly.png`、`monthly_trend.png`、`weekday_bar.png`、`length_dist.png`
 - `charts/word_cloud_pair.png`（双人词云）或 `charts/word_cloud.png`（单人词云）
