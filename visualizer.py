@@ -81,7 +81,7 @@ def _style(ax, title='', xlabel='', ylabel=''):
 
 def hourly(stats: dict) -> plt.Figure:
     """每小时消息分布"""
-    fig, ax = plt.subplots(figsize=(11, 4), facecolor=CHART_BG)
+    fig, ax = plt.subplots(figsize=(14, 6), facecolor=CHART_BG)
     h = stats['hourly']
     colors = [BROWN_MID if i == h.idxmax() else BROWN_DARK for i in range(24)]
     ax.bar(h.index, h.values, color=colors, width=0.75, alpha=0.88)
@@ -107,7 +107,7 @@ def hourly(stats: dict) -> plt.Figure:
 
 def monthly_trend(stats: dict) -> plt.Figure:
     """月度消息趋势"""
-    fig, ax = plt.subplots(figsize=(13, 4), facecolor=CHART_BG)
+    fig, ax = plt.subplots(figsize=(14, 6), facecolor=CHART_BG)
     m = stats['monthly']
     x = range(len(m))
 
@@ -131,7 +131,7 @@ def monthly_trend(stats: dict) -> plt.Figure:
 
 def weekday_bar(stats: dict) -> plt.Figure:
     """一周各天消息分布"""
-    fig, ax = plt.subplots(figsize=(8, 4), facecolor=CHART_BG)
+    fig, ax = plt.subplots(figsize=(12, 5.5), facecolor=CHART_BG)
     wd = stats['weekday']
     day_labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
     colors = [BROWN_MID if i >= 5 else BROWN_DARK for i in range(7)]
@@ -212,7 +212,7 @@ def word_cloud_pair(stats_self: dict, stats_partner: dict,
 
 def length_dist(stats: dict) -> plt.Figure:
     """消息长度分布直方图"""
-    fig, ax = plt.subplots(figsize=(9, 4), facecolor=CHART_BG)
+    fig, ax = plt.subplots(figsize=(12, 5.5), facecolor=CHART_BG)
     lengths = stats['length_series'].clip(upper=200)
     ax.hist(lengths, bins=40, color=BROWN_DARK, alpha=0.82, edgecolor='white', linewidth=0.4)
     mean_len = lengths.mean()

@@ -206,8 +206,8 @@ body {
 /* ── Charts ────────────────────────────────────────── */
 .chart-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 .chart-grid img {
   width: 100%; border-radius: var(--r-sm); display: block;
